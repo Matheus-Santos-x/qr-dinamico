@@ -216,7 +216,7 @@ function abrir(l) {
         </div>
       </div>
       <label>Nome<input id="j-nome" value="${esc(l.nome)}" maxlength="80" placeholder="Ex.: Pizzaria do João"></label>
-      <label>Para onde leva<input id="j-destino" type="url" value="${esc(l.destino)}" placeholder="Cole aqui o link de avaliação do Google"></label>
+      <label>Para onde leva<input id="j-destino" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${esc(l.destino)}" placeholder="Cole aqui o link de avaliação do Google"></label>
       <p class="erro" id="j-erro"></p>
       <div class="pe">
         <button class="btn ghost perigo" type="button" data-excluir>Excluir</button>
