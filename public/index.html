@@ -7,7 +7,7 @@
 <title>QR codes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Space+Grotesk:wght@700;800&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="/qrcode.js"></script>
 <style>
   :root { --bg:#120d0e; --bg2:#1a1315; --bg3:#231a1c; --linha:#33272a; --linha2:#463639; --tx:#f6eeeb; --tx2:#ab9c99; --tx3:#7d6d6b; --red:#e5484d; --ok:#46c08a; }
   * { box-sizing: border-box; }
@@ -66,6 +66,10 @@
   .link-fixo { font-size: 13px; font-weight: 700; color: #fca5a5; word-break: break-all; }
   .qrbtns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .pe { display: flex; justify-content: space-between; gap: 8px; }
+  .aviso { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(240,179,90,.35); background: rgba(240,179,90,.08); color: #f0c98a; font-size: 13.5px; font-weight: 600; }
+  .hist { display: grid; gap: 2px; max-height: 150px; overflow-y: auto; font-size: 12.5px; color: var(--tx2); }
+  .hist div { padding: 6px 0; border-top: 1px solid var(--linha); overflow-wrap: anywhere; }
+  .hist b { color: var(--tx); font-weight: 700; }
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--tx); color: var(--bg); padding: 11px 16px; border-radius: 12px; font-weight: 700; z-index: 20; }
 </style>
 </head>
@@ -103,9 +107,11 @@
       <div class="criar">
         <input id="qtd" type="number" min="1" max="200" value="10" aria-label="Quantos QR codes criar">
         <button class="btn pri" id="btn-criar" type="button">Criar QR codes</button>
+        <button class="btn sm" id="btn-exportar" type="button" title="Baixa a lista com número, nome, link fixo e destino">Exportar lista</button>
         <button class="btn ghost sm" id="btn-sair" type="button">Sair</button>
       </div>
     </div>
+    <p class="aviso hidden" id="aviso-dominio">O domínio fixo ainda não foi definido (variável PUBLIC_URL). Defina o domínio definitivo antes de imprimir plaquinhas: o endereço que vai no QR não pode mudar depois.</p>
     <input class="busca" id="busca" placeholder="Buscar por número, nome ou link" autocomplete="off">
     <div class="card" style="padding: 6px"><div class="lista" id="lista"></div></div>
   </div>
@@ -116,8 +122,9 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const ler = (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
 const gravar = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} };
-const urlDo = (codigo) => `${location.origin}/${codigo}`;
-let links = [];
+let base = location.origin, links = [];
+const urlDo = (codigo) => `${base}/${codigo}`;
+const dataBR = (s) => s ? new Date(s.replace(" ", "T") + "Z").toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "";
 
 function toast(t) { const el = document.createElement("div"); el.className = "toast"; el.textContent = t; document.body.appendChild(el); setTimeout(() => el.remove(), 2200); }
 
@@ -171,10 +178,15 @@ $("btn-sair").onclick = async () => { try { await chamar("/sair", { method: "POS
 /* ---------- lista ---------- */
 async function carregar() {
   const d = await chamar("/links");
-  links = d.links;
+  receber(d);
   $("tela-login").classList.add("hidden");
   $("tela-painel").classList.remove("hidden");
   desenhar();
+}
+
+function receber(d) {
+  base = d.base || location.origin; links = d.links || [];
+  $("aviso-dominio").classList.toggle("hidden", !!d.fixo);
 }
 
 function desenhar() {
@@ -195,10 +207,39 @@ $("lista").addEventListener("keydown", (e) => { if (e.key === "Enter") { const i
 $("btn-criar").onclick = async () => {
   const qtd = parseInt($("qtd").value, 10) || 1;
   const b = $("btn-criar"); b.disabled = true;
-  try { const d = await chamar("/links", { method: "POST", body: JSON.stringify({ quantidade: qtd }) }); links = d.links; desenhar(); toast(`${qtd} QR ${qtd === 1 ? "criado" : "codes criados"}`); }
+  try { const d = await chamar("/links", { method: "POST", body: JSON.stringify({ quantidade: qtd }) }); receber(d); desenhar(); toast(`${qtd} QR ${qtd === 1 ? "criado" : "codes criados"}`); }
   catch (err) { toast(err.message); }
   b.disabled = false;
 };
+
+$("btn-exportar").onclick = () => {
+  const cel = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const linhas = [["numero", "nome", "link_fixo", "destino", "leituras", "ultima_leitura"].join(";")]
+    .concat(links.map((l) => [l.numero, l.nome, urlDo(l.codigo), l.destino, l.cliques, l.ultimo_clique || ""].map(cel).join(";")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\ufeff" + linhas.join("\r\n")], { type: "text/csv;charset=utf-8" }));
+  a.download = `qr-codes-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+/* ---------- desenho do QR (sem internet, biblioteca local) ---------- */
+function matrizQR(texto) { const qr = qrcode(0, "M"); qr.addData(texto); qr.make(); return qr; }
+function qrCanvas(texto, px) {
+  const qr = matrizQR(texto), n = qr.getModuleCount(), borda = 4, mod = Math.floor(px / (n + borda * 2));
+  const tam = mod * (n + borda * 2), c = document.createElement("canvas");
+  c.width = c.height = tam;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, tam, tam); g.fillStyle = "#000";
+  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) g.fillRect((k + borda) * mod, (r + borda) * mod, mod, mod);
+  return c;
+}
+function qrSvg(texto) {
+  const qr = matrizQR(texto), n = qr.getModuleCount(), borda = 4, t = n + borda * 2;
+  let d = "";
+  for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) d += `M${k + borda} ${r + borda}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${t} ${t}" shape-rendering="crispEdges"><rect width="${t}" height="${t}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+function baixar(href, nome) { const a = document.createElement("a"); a.href = href; a.download = nome; a.click(); }
 
 /* ---------- janela de um QR ---------- */
 function abrir(l) {
@@ -212,31 +253,45 @@ function abrir(l) {
         <div>
           <div class="link-fixo">${esc(urlDo(l.codigo))}</div>
           <p class="dica" style="margin-top:4px">Este é o link que vai no QR e no NFC. Ele nunca muda.</p>
-          <div class="qrbtns"><button class="btn sm" type="button" data-baixar>Baixar QR</button><button class="btn sm ghost" type="button" data-copiar>Copiar link</button></div>
+          <div class="qrbtns"><button class="btn sm" type="button" data-baixar>Baixar PNG</button><button class="btn sm" type="button" data-svg title="Melhor para a gráfica: não perde qualidade em nenhum tamanho">Baixar SVG</button><button class="btn sm ghost" type="button" data-copiar>Copiar link</button></div>
         </div>
       </div>
       <label>Nome<input id="j-nome" value="${esc(l.nome)}" maxlength="80" placeholder="Ex.: Pizzaria do João"></label>
-      <label>Para onde leva<input id="j-destino" type="text" inputmode="url" autocapitalize="off" spellcheck="false" value="${esc(l.destino)}" placeholder="Cole aqui o link de avaliação do Google"></label>
+      <label>Para onde leva<input id="j-destino" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(l.destino)}" placeholder="Cole aqui o link de avaliação do Google"></label>
+      ${l.destino ? `<p class="dica" style="margin-top:-6px"><a href="${esc(l.destino)}" target="_blank" rel="noopener noreferrer" style="color:#fca5a5">Testar destino atual</a>${l.alterado_em ? ` · alterado em ${esc(dataBR(l.alterado_em))}` : ""}</p>` : ""}
       <p class="erro" id="j-erro"></p>
       <div class="pe">
         <button class="btn ghost perigo" type="button" data-excluir>Excluir</button>
         <button class="btn pri" type="submit">Salvar destino</button>
       </div>
+      <details><summary class="dica" style="cursor:pointer">Histórico de alterações</summary><div class="hist" id="j-hist" style="margin-top:8px">Carregando…</div></details>
     </form>`;
   document.body.appendChild(f);
-  new QRCode($("qr-img"), { text: urlDo(l.codigo), width: 1024, height: 1024, correctLevel: QRCode.CorrectLevel.M });
-  const fechar = () => f.remove();
-  f.addEventListener("mousedown", (e) => { if (e.target === f) fechar(); });
+  $("qr-img").appendChild(qrCanvas(urlDo(l.codigo), 600));
+  const aoTeclar = (e) => { if (e.key === "Escape") fechar(); };
+  const fechar = () => { f.remove(); document.removeEventListener("keydown", aoTeclar); };
+  document.addEventListener("keydown", aoTeclar);
+  f.querySelector("details").addEventListener("toggle", async (e) => {
+    if (!e.target.open) return;
+    const nomes = { criou: "Criado", destino: "Destino", nome: "Nome" };
+    try {
+      const d = await chamar(`/links/${encodeURIComponent(l.codigo)}/historico`);
+      $("j-hist").innerHTML = d.historico.length ? d.historico.map((h) => `<div><b>${esc(nomes[h.acao] || h.acao)}</b> · ${esc(dataBR(h.em))} · ${esc(h.quem === "senha" ? "senha" : h.quem)}${h.acao === "criou" ? "" : `<br>${esc(h.antes || "(vazio)")} → ${esc(h.depois || "(vazio)")}`}</div>`).join("") : "Sem alterações.";
+    } catch (err) { $("j-hist").textContent = err.message; }
+  });
   f.querySelector("[data-fechar]").onclick = fechar;
   f.querySelector("[data-copiar]").onclick = async () => { try { await navigator.clipboard.writeText(urlDo(l.codigo)); toast("Link copiado"); } catch { toast(urlDo(l.codigo)); } };
   f.querySelector("[data-baixar]").onclick = () => {
-    const box = $("qr-img"), canvas = box.querySelector("canvas"), img = box.querySelector("img");
-    const a = document.createElement("a");
-    a.href = canvas ? canvas.toDataURL("image/png") : img.src;
-    a.download = `qr-${l.numero}.png`; a.click();
+    baixar(qrCanvas(urlDo(l.codigo), 2000).toDataURL("image/png"), `qr-${l.numero}.png`);
+  };
+  f.querySelector("[data-svg]").onclick = () => {
+    const u = URL.createObjectURL(new Blob([qrSvg(urlDo(l.codigo))], { type: "image/svg+xml" }));
+    baixar(u, `qr-${l.numero}.svg`); setTimeout(() => URL.revokeObjectURL(u), 1000);
   };
   f.querySelector("[data-excluir]").onclick = async () => {
-    if (!confirm(`Excluir o QR ${l.numero}? Se ele já estiver impresso, vai parar de funcionar.`)) return;
+    const r = prompt(`Excluir o QR ${l.numero}? Se ele já estiver impresso, a plaquinha para de funcionar para sempre.\n\nPara confirmar, digite o número ${l.numero}:`);
+    if (r === null) return;
+    if (String(r).trim() !== String(l.numero)) { $("j-erro").textContent = "Número não confere. Nada foi excluído."; return; }
     try { await chamar(`/links/${encodeURIComponent(l.codigo)}`, { method: "DELETE" }); fechar(); toast("QR excluído"); carregar(); } catch (err) { $("j-erro").textContent = err.message; }
   };
   f.querySelector("form").addEventListener("submit", async (e) => {
