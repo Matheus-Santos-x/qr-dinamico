@@ -69,9 +69,10 @@ const novoCodigo = () => {
   return c;
 };
 function destinoValido(v) {
-  const t = String(v || "").trim();
+  let t = String(v || "").trim();
   if (!t) return "";
-  try { const u = new URL(t); return ["http:", "https:"].includes(u.protocol) ? u.toString() : null; } catch { return null; }
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) t = "https://" + t; // "evoriseai.com.br" vira "https://evoriseai.com.br"
+  try { const u = new URL(t); return ["http:", "https:"].includes(u.protocol) && u.hostname.includes(".") ? u.toString() : null; } catch { return null; }
 }
 function json(res, status, dados) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
